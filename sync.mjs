@@ -1,73 +1,108 @@
-import { program } from "commander";
 import chalk from "chalk";
+import { program } from "commander";
 import inquirer from "inquirer";
+import { createSpinner } from "nanospinner";
 import fetch from "node-fetch";
 import Trakt from "trakt.tv";
-import { createSpinner } from "nanospinner";
+
+const SIMKL_OAUTH_PIN_URL = "https://api.simkl.com/oauth/pin";
+const SIMKL_SYNC_URL =
+  "https://api.simkl.com/sync/all-items/?extended=full&episode_watched_at=yes";
+const SIMKL_DEVELOPER_URL = "https://simkl.com/settings/developer/new";
+const TRAKT_APPLICATIONS_URL = "https://trakt.tv/oauth/applications";
 
 program
   .name("Trakt Sync CLI")
   .description("Synchronize your watch history from Simkl to Trakt.")
   .version("1.0.0");
 
-const validateInput = (input) => !!input || "This field cannot be empty!";
+/**
+ * Validates that input is not empty
+ */
+const validateInput = (input) => {
+  if (!input || input.trim().length === 0) {
+    return "This field cannot be empty!";
+  }
+  return true;
+};
 
+/**
+ * Fetches JSON from a URL with error handling
+ */
+const fetchJson = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  return response.json();
+};
+
+/**
+ * Authorizes with Simkl and fetches watch history
+ */
 async function getSimklWatched(clientId) {
   const spinner = createSpinner("Authorizing Simkl...").start();
-  const { user_code, verification_url } = await fetch(
-    `https://api.simkl.com/oauth/pin?client_id=${clientId}`
-  ).then((res) => res.json());
 
-  console.log(
-    chalk.cyan(
-      `Please authorize the Simkl application by visiting: ${verification_url} and using this code: ${user_code}`
-    )
-  );
-  await inquirer.prompt({
-    type: "confirm",
-    name: "confirmed",
-    message: "Hit Enter once you have authorized.",
-  });
+  try {
+    const { user_code, verification_url } = await fetchJson(
+      `${SIMKL_OAUTH_PIN_URL}?client_id=${clientId}`,
+    );
 
-  const { access_token } = await fetch(
-    `https://api.simkl.com/oauth/pin/${user_code}?client_id=${clientId}`
-  ).then((res) => res.json());
-  const data = await fetch(
-    "https://api.simkl.com/sync/all-items/?extended=full&episode_watched_at=yes",
-    {
+    console.log(
+      chalk.cyan(
+        `Please authorize the Simkl application by visiting: ${verification_url} and using this code: ${user_code}`,
+      ),
+    );
+
+    await inquirer.prompt({
+      type: "confirm",
+      name: "confirmed",
+      message: "Hit Enter once you have authorized.",
+    });
+
+    const { access_token } = await fetchJson(
+      `${SIMKL_OAUTH_PIN_URL}/${user_code}?client_id=${clientId}`,
+    );
+
+    const data = await fetchJson(SIMKL_SYNC_URL, {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${access_token}`,
         "simkl-api-key": clientId,
       },
-    }
-  ).then((res) => res.json());
+    });
 
-  spinner.success({ text: "Simkl authorization successful." });
-  return data;
+    spinner.success({ text: "Simkl authorization successful." });
+    return data;
+  } catch (error) {
+    spinner.error({ text: `Simkl authorization failed: ${error.message}` });
+    throw error;
+  }
 }
-async function main() {
-  const answers = await inquirer.prompt([
+
+/**
+ * Prompts user for configuration
+ */
+async function getConfiguration() {
+  return inquirer.prompt([
     {
       type: "input",
-      message:
-        "Please input your Simkl client ID (get it from https://simkl.com/settings/developer/new by creating a new application)\n",
+      message: `Please input your Simkl client ID (get it from ${SIMKL_DEVELOPER_URL} by creating a new application)\n`,
       name: "simkl_client_id",
-      validate,
+      validate: validateInput,
     },
     {
       type: "input",
-      message:
-        "Please input your Trakt client ID (get it from https://trakt.tv/oauth/applications by creating a new application):\n",
+      message: `Please input your Trakt client ID (get it from ${TRAKT_APPLICATIONS_URL} by creating a new application):\n`,
       name: "client_id",
-      validate,
+      validate: validateInput,
     },
     {
       type: "input",
       message:
         "Please input your Trakt client secret (you get it from the same place you got the client ID):\n",
       name: "client_secret",
-      validate,
+      validate: validateInput,
     },
     {
       type: "confirm",
@@ -76,131 +111,157 @@ async function main() {
       default: false,
     },
   ]);
-  const spinner = createSpinner("Fetching watch history...").start();
-  const watched = await getSimklWatched(answers.simkl_client_id);
-  spinner.success({ text: "Watch history fetched successfully." });
+}
 
-  const trakt = new Trakt({
-    client_id: answers.client_id,
-    client_secret: answers.client_secret,
-  });
+/**
+ * Authorizes with Trakt
+ */
+async function authorizeTrakt(trakt) {
+  const poll = await trakt.get_codes();
+  console.log(
+    chalk.blue(
+      `Authorize the Trakt application via: ${poll.verification_url} using this code: ${poll.user_code}`,
+    ),
+  );
+  await trakt.poll_access(poll);
+}
+
+/**
+ * Removes previous Trakt watch history
+ */
+async function removePreviousHistory(trakt) {
   try {
-    const poll = await trakt.get_codes();
+    console.log("Getting previous watch history...");
+
+    const moviesResponse = await trakt.sync.watched({ type: "movies" });
+    const showsResponse = await trakt.sync.watched({ type: "shows" });
+
+    const movies = moviesResponse.map((item) => item.movie);
+    const shows = showsResponse.map((item) => item.show);
+
     console.log(
-      chalk.blue(
-        `Authorize the Trakt application via: ${poll.verification_url} using this code: ${poll.user_code}`
-      )
+      `Removing ${movies.length} movies and ${shows.length} shows from your Trakt watchlist...`,
     );
-    await trakt.poll_access(poll);
-    spinner.success({ text: "Trakt authorization successful." });
 
-    if (answers.remove_previous) {
-      try {
-        console.log("Getting previous watch history...");
-        const movies = await trakt.sync
-          .watched({ type: "movies" })
-          .then((movie) => movie.map((mv) => mv.movie));
-        const shows = await trakt.sync
-          .watched({ type: "shows" })
-          .then((show) => show.map((sh) => sh.show));
-        console.log(
-          `Removing ${movies.length} movies and ${shows.length} shows from your Trakt watchlist...`
-        );
-        await trakt.sync.history.remove({ movies, shows }).then((res) => {
-          console.log(
-            `Succesfully removed ${res.deleted.movies} movies and ${res.deleted.episodes} episodes your watch history.`
-          );
-          sync(watched);
-        });
-      } catch {
-        const answer = await inquirer.prompt([
-          {
-            name: "confirm",
-            message:
-              "The watch history could not be removed for various reasons (maybe your watch history is too big), continue syncing?",
-            default: true,
-            type: "boolean",
-          },
-        ]);
-        if (answer) await sync(watched);
-        else process.exit(0);
-      }
-    }
+    const result = await trakt.sync.history.remove({ movies, shows });
+    console.log(
+      `Successfully removed ${result.deleted.movies} movies and ${result.deleted.episodes} episodes from your watch history.`,
+    );
 
-    await sync(watched, trakt);
+    return true;
   } catch (error) {
-    spinner.error({ text: `Error: ${error.message}` });
+    console.error(chalk.red(`Error removing history: ${error.message}`));
+    const { confirm } = await inquirer.prompt([
+      {
+        name: "confirm",
+        message:
+          "The watch history could not be removed for various reasons (maybe your watch history is too big), continue syncing?",
+        default: true,
+        type: "boolean",
+      },
+    ]);
+    return confirm;
   }
 }
 
-async function sync(watched, trakt) {
-  const traktObject = {
-    shows: [],
-    movies: [],
-  };
+/**
+ * Transforms Simkl show data to Trakt format
+ */
+const transformShow = (show) => ({
+  watched_at: show.last_watched_at,
+  title: show.show.title,
+  year: show.show.year,
+  seasons: show.seasons,
+  ids: {
+    mal: show.show.ids?.mal,
+    imdb: show.show.ids?.imdb,
+    tmdb: show.show.ids?.tmdb,
+    anidb: show.show.ids?.anidb,
+  },
+});
 
-  watched.shows.forEach((show) => {
-    if (!show.last_watched_at) return;
-    traktObject.shows.push({
-      watched_at: show.last_watched_at,
-      title: show.show.title,
-      year: show.show.year,
-      seasons: show.seasons,
-      ids: {
-        mal: show.show.ids.mal,
-        imdb: show.show.ids.imdb,
-        tmdb: show.show.ids.tmdb,
-        anidb: show.show.ids.anidb,
-      },
-    });
-  });
+/**
+ * Transforms Simkl movie data to Trakt format
+ */
+const transformMovie = (movie) => ({
+  watched_at: movie.last_watched_at,
+  title: movie.movie.title,
+  year: movie.movie.year,
+  ids: {
+    slug: movie.movie.ids?.slug,
+    imdb: movie.movie.ids?.imdb,
+    tmdb: movie.movie.ids?.tmdb,
+  },
+});
 
-  watched.movies.forEach((movie) => {
-    if (!movie.last_watched_at) return;
-    traktObject.movies.push({
-      watched_at: movie.last_watched_at,
-      title: movie.movie.title,
-      year: movie.movie.year,
-      ids: {
-        slug: movie.movie.ids.slug,
-        imdb: movie.movie.ids.imdb,
-        tmdb: movie.movie.ids.tmdb,
-      },
-    });
-  });
+/**
+ * Builds Trakt sync object from Simkl watch history
+ */
+function buildTraktSyncObject(watched) {
+  const shows = [...(watched.shows || []), ...(watched.anime || [])]
+    .filter((item) => item.last_watched_at)
+    .map(transformShow);
 
-  watched.anime.forEach((anime) => {
-    if (!anime.last_watched_at) return;
-    traktObject.shows.push({
-      watched_at: anime.last_watched_at,
-      title: anime.show.title,
-      year: anime.show.year,
-      seasons: anime.seasons,
-      ids: {
-        mal: anime.show.ids.mal,
-        imdb: anime.show.ids.imdb,
-        tmdb: anime.show.ids.tmdb,
-        anidb: anime.show.ids.anidb,
-      },
-    });
-  });
+  const movies = (watched.movies || [])
+    .filter((movie) => movie.last_watched_at)
+    .map(transformMovie);
+
+  return { shows, movies };
+}
+
+/**
+ * Syncs watch history to Trakt
+ */
+async function syncToTrakt(watched, trakt) {
+  const traktObject = buildTraktSyncObject(watched);
 
   console.log(
-    `Syncing ${traktObject.shows.length} shows (incl. anime) and ${traktObject.movies.length} movies to your Trakt account...`
+    `Syncing ${traktObject.shows.length} shows (incl. anime) and ${traktObject.movies.length} movies to your Trakt account...`,
   );
-  await trakt.sync.history
-    .add(traktObject)
-    .then((res) =>
-      console.log(
-        `Successfully added ${res.added.movies} movies and ${res.added.episodes} episodes to your Trakt watch history!`
-      )
-    );
+
+  const result = await trakt.sync.history.add(traktObject);
+  console.log(
+    chalk.green(
+      `Successfully added ${result.added.movies} movies and ${result.added.episodes} episodes to your Trakt watch history!`,
+    ),
+  );
 }
 
-function validate(string) {
-  if (!string) return "Please input the required string!";
-  else return true;
+/**
+ * Main function
+ */
+async function main() {
+  try {
+    const config = await getConfiguration();
+
+    const spinner = createSpinner("Fetching watch history...").start();
+    const watched = await getSimklWatched(config.simkl_client_id);
+    spinner.success({ text: "Watch history fetched successfully." });
+
+    const trakt = new Trakt({
+      client_id: config.client_id,
+      client_secret: config.client_secret,
+    });
+
+    const authSpinner = createSpinner("Authorizing Trakt...").start();
+    await authorizeTrakt(trakt);
+    authSpinner.success({ text: "Trakt authorization successful." });
+
+    if (config.remove_previous) {
+      const shouldContinue = await removePreviousHistory(trakt);
+      if (!shouldContinue) {
+        console.log(chalk.yellow("Sync cancelled by user."));
+        process.exit(0);
+      }
+    }
+
+    await syncToTrakt(watched, trakt);
+  } catch (error) {
+    console.error(chalk.red(`Error: ${error.message}`));
+    process.exit(1);
+  }
 }
+
 program
   .command("sync")
   .description("Sync watch history from Simkl to Trakt")
