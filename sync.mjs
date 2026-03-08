@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { program } from "commander";
 import gradient from "gradient-string";
 import fetch from "node-fetch";
+import { fileURLToPath } from "node:url";
 import Trakt from "trakt.tv";
 
 const SIMKL_PIN_URL = "https://api.simkl.com/oauth/pin";
@@ -257,4 +258,8 @@ program
   .description("Start the sync wizard")
   .action(sync);
 
-program.parse();
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  program.parse();
+}
+
+export { fetchJson, transformShow, transformMovie, buildSyncPayload, sync };

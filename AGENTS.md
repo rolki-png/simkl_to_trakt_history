@@ -15,7 +15,10 @@ Single-file Node.js CLI tool (`sync.mjs`) that transfers watch history from Simk
 ### Lint / Test / Build
 
 - **No linter configured** — the project has no ESLint, Prettier, or similar tooling.
-- **No automated tests** — there are no test files or test framework dependencies.
+- **Tests** — `npm test` runs vitest. Three test files in `test/`:
+  - `data-pipeline.test.mjs` — transform functions + fetchJson with real HTTP server
+  - `cli.test.mjs` — CLI integration tests via process spawning
+  - `sync-flow.test.mjs` — full sync flow with mocked APIs (node-fetch, trakt.tv, @clack/prompts)
 - **No build step** — the app runs directly via `node sync.mjs` (ES Modules).
 
 ### Notes
