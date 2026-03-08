@@ -1,17 +1,57 @@
-# Simkl To Trakt History 
-Easily transfer your watch history from Simkl to Trakt.
+# Simkl → Trakt History Sync
 
-Before you can use this, you'll have to create an API app on Simkl [here](https://simkl.com/settings/developer/new/) and one on Trakt [here](https://trakt.tv/oauth/applications).
+Transfer your watch history from **Simkl** to **Trakt.tv** with a guided, interactive CLI.
 
-## Installation
+## Prerequisites
 
-1. Install [Node.js](https://nodejs.org/en/) (minimum version needed is 15.3.0)
-1. Clone or download this repository, unpack if necesarry, `cd` into the downloaded/unpacked directory with your command line of choice
-1. Type ```npm install``` and hit Enter
-1. Type ```node sync.mjs sync```, hit Enter and follow the instructions
+Before you begin, create an API app on each service:
 
-# Remove current Trakt watch history
-Even though the script can attempt to remove your current Trakt history, it can't handle big histories. 
+| Service | Link |
+|---------|------|
+| Simkl   | [simkl.com/settings/developer/new](https://simkl.com/settings/developer/new/) |
+| Trakt   | [trakt.tv/oauth/applications](https://trakt.tv/oauth/applications) |
 
-If you need to handle big histories, you can use the following two:
-https://github.com/damienhaynes/TraktRater & https://gist.github.com/hugoboos/68b830aec8e7cab65055
+You'll need the **Client ID** from Simkl, and the **Client ID + Client Secret** from Trakt.
+
+## Quick start
+
+```bash
+# 1. Install Node.js (v15.3.0+) — https://nodejs.org
+# 2. Clone this repo and cd into it
+# 3. Install dependencies
+npm install
+
+# 4. Run the sync wizard
+node sync.mjs
+```
+
+The wizard walks you through authentication and syncing step-by-step.
+
+## Usage
+
+```
+Usage: simkl-to-trakt [options] [command]
+
+Transfer your Simkl watch history to Trakt.tv
+
+Options:
+  -V, --version   output the version number
+  -h, --help      display help for command
+
+Commands:
+  sync            Start the sync wizard (default)
+  help [command]  display help for command
+```
+
+Running `node sync.mjs` without arguments starts the sync wizard directly.
+
+## Clearing large Trakt histories
+
+The built-in history removal works for most accounts. For very large histories, use:
+
+- [TraktRater](https://github.com/damienhaynes/TraktRater)
+- [Trakt history cleanup gist](https://gist.github.com/hugoboos/68b830aec8e7cab65055)
+
+## License
+
+MIT
