@@ -27,6 +27,23 @@ function bail(message = "Cancelled.") {
   process.exit(0);
 }
 
+function safeSpinner() {
+  const s = p.spinner();
+  let active = false;
+  return {
+    start(msg) {
+      s.start(msg);
+      active = true;
+    },
+    stop(msg) {
+      if (active) {
+        s.stop(msg);
+        active = false;
+      }
+    },
+  };
+}
+
 // ── Data transforms ──────────────────────────────────────────
 
 const transformShow = (show) => ({
@@ -114,10 +131,11 @@ async function sync() {
 
   // ── Simkl auth + fetch ───────────────────────────────────
 
-  const s = p.spinner();
+  const s = safeSpinner();
   s.start("Connecting to Simkl");
 
   let watched;
+  let payload;
   try {
     const pin = await fetchJson(
       `${SIMKL_PIN_URL}?client_id=${config.simkl_client_id}`,
@@ -147,9 +165,9 @@ async function sync() {
       },
     });
 
-    const { shows, movies } = buildSyncPayload(watched);
+    payload = buildSyncPayload(watched);
     s.stop(
-      `Found ${chalk.bold(shows.length)} shows and ${chalk.bold(movies.length)} movies`,
+      `Found ${chalk.bold(payload.shows.length)} shows and ${chalk.bold(payload.movies.length)} movies`,
     );
   } catch (err) {
     s.stop("Simkl failed");
@@ -220,8 +238,6 @@ async function sync() {
   // ── Sync to Trakt ────────────────────────────────────────
 
   try {
-    const payload = buildSyncPayload(watched);
-
     s.start(
       `Syncing ${payload.shows.length} shows and ${payload.movies.length} movies`,
     );
@@ -262,4 +278,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   program.parse();
 }
 
-export { fetchJson, transformShow, transformMovie, buildSyncPayload, sync };
+export {
+  fetchJson,
+  transformShow,
+  transformMovie,
+  buildSyncPayload,
+  safeSpinner,
+  sync,
+};

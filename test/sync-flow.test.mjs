@@ -65,7 +65,7 @@ vi.mock("trakt.tv", () => ({
 
 // ── Imports (resolved against mocks) ─────────────────────────
 
-import { sync } from "../sync.mjs";
+import { sync, safeSpinner } from "../sync.mjs";
 import fetch from "node-fetch";
 import Trakt from "trakt.tv";
 import * as p from "@clack/prompts";
@@ -535,5 +535,96 @@ describe("sync flow — edge cases", () => {
     const payload = mockTraktInstance.sync.history.add.mock.calls[0][0];
     expect(payload.shows).toHaveLength(0);
     expect(payload.movies).toHaveLength(1);
+  });
+});
+
+describe("safeSpinner", () => {
+  it("delegates start and stop to the underlying spinner", () => {
+    const s = safeSpinner();
+
+    s.start("loading");
+    expect(mockSpinner.start).toHaveBeenCalledWith("loading");
+
+    s.stop("done");
+    expect(mockSpinner.stop).toHaveBeenCalledWith("done");
+  });
+
+  it("does not call underlying stop when spinner was never started", () => {
+    const s = safeSpinner();
+
+    s.stop("should be ignored");
+    expect(mockSpinner.stop).not.toHaveBeenCalled();
+  });
+
+  it("does not call underlying stop twice on double-stop", () => {
+    const s = safeSpinner();
+
+    s.start("loading");
+    s.stop("first stop");
+    s.stop("second stop");
+
+    expect(mockSpinner.stop).toHaveBeenCalledTimes(1);
+    expect(mockSpinner.stop).toHaveBeenCalledWith("first stop");
+  });
+
+  it("allows restart after stop", () => {
+    const s = safeSpinner();
+
+    s.start("phase 1");
+    s.stop("done 1");
+    s.start("phase 2");
+    s.stop("done 2");
+
+    expect(mockSpinner.start).toHaveBeenCalledTimes(2);
+    expect(mockSpinner.stop).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("sync flow — spinner safety (Issue #1)", () => {
+  it("does not crash when Trakt get_codes fails before spinner starts", async () => {
+    setupDefaultMocks();
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`EXIT_${code}`);
+    });
+
+    mockTraktInstance.get_codes.mockRejectedValue(
+      new Error("Invalid client_id"),
+    );
+
+    await expect(sync()).rejects.toThrow("EXIT_1");
+    expect(p.log.error).toHaveBeenCalledWith("Invalid client_id");
+
+    const stopCalls = mockSpinner.stop.mock.calls.map((c) => c[0]);
+    expect(stopCalls).not.toContain("Trakt auth failed");
+  });
+
+  it("does not crash when error occurs between Simkl stop and restart", async () => {
+    setupDefaultMocks();
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`EXIT_${code}`);
+    });
+
+    p.confirm.mockRejectedValueOnce(new Error("Prompt error"));
+
+    await expect(sync()).rejects.toThrow("EXIT_1");
+  });
+});
+
+describe("sync flow — single payload computation (Issue #2)", () => {
+  it("calls buildSyncPayload only once for both display and sync", async () => {
+    setupDefaultMocks();
+
+    await sync();
+
+    const addPayload = mockTraktInstance.sync.history.add.mock.calls[0][0];
+    expect(addPayload.shows).toHaveLength(2);
+    expect(addPayload.movies).toHaveLength(1);
+
+    const syncStartMsg = mockSpinner.start.mock.calls.find(
+      (c) => typeof c[0] === "string" && c[0].includes("Syncing"),
+    );
+    expect(syncStartMsg).toBeDefined();
+    expect(syncStartMsg[0]).toContain("2");
+    expect(syncStartMsg[0]).toContain("1");
   });
 });
