@@ -11,7 +11,7 @@ Before you begin, create an API app on each service:
 | Simkl   | [simkl.com/settings/developer/new](https://simkl.com/settings/developer/new/) |
 | Trakt   | [trakt.tv/oauth/applications](https://trakt.tv/oauth/applications) |
 
-You'll need the **Client ID** from Simkl, and the **Client ID + Client Secret** from Trakt.
+You'll need a **Client ID** from each service. Trakt sign-in uses the device code flow and only the Client ID.
 
 ## Quick start
 
