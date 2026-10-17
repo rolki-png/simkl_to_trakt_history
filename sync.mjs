@@ -4,13 +4,21 @@ import { program } from "commander";
 import gradient from "gradient-string";
 import fetch from "node-fetch";
 import { fileURLToPath } from "node:url";
-import Trakt from "trakt.tv";
 
 const SIMKL_PIN_URL = "https://api.simkl.com/oauth/pin";
 const SIMKL_SYNC_URL =
   "https://api.simkl.com/sync/all-items/?extended=full&episode_watched_at=yes";
 const SIMKL_DEV_URL = "https://simkl.com/settings/developer/new";
 const TRAKT_APPS_URL = "https://trakt.tv/oauth/applications";
+const TRAKT_AUTH_URL = "https://auth.trakt.tv";
+const TRAKT_API_URL = "https://api.trakt.tv";
+
+const DEVICE_TOKEN_ERRORS = {
+  404: "Invalid device code.",
+  409: "This code was already used.",
+  410: "Authorization expired.",
+  418: "Authorization denied.",
+};
 
 const brand = gradient(["#a78bfa", "#818cf8", "#6366f1", "#4f46e5"]);
 
@@ -82,6 +90,70 @@ function buildSyncPayload(watched) {
   return { shows, movies };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function requestDeviceCode(clientId) {
+  return fetchJson(`${TRAKT_AUTH_URL}/oauth/device/code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId }),
+  });
+}
+
+async function pollDeviceToken(clientId, device) {
+  const expiresIn = Number(device.expires_in ?? 600);
+  const deadline = Date.now() + expiresIn * 1000;
+  let waitMs = Math.max(0, Number(device.interval ?? 5)) * 1000;
+
+  while (Date.now() < deadline) {
+    await sleep(waitMs);
+    if (Date.now() >= deadline) break;
+
+    const res = await fetch(`${TRAKT_AUTH_URL}/oauth/device/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: device.device_code,
+        client_id: clientId,
+      }),
+    });
+
+    if (res.status === 200) return res.json();
+    if (res.status === 400) continue;
+    if (res.status === 429) {
+      waitMs += 1000;
+      continue;
+    }
+
+    throw new Error(
+      DEVICE_TOKEN_ERRORS[res.status] ??
+        `Trakt authorization failed (HTTP ${res.status})`,
+    );
+  }
+
+  throw new Error("Authorization expired.");
+}
+
+async function traktRequest(
+  clientId,
+  accessToken,
+  path,
+  { method = "GET", body } = {},
+) {
+  return fetchJson(`${TRAKT_API_URL}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "trakt-api-version": "2",
+      "trakt-api-key": clientId,
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
 // ── Main sync flow ───────────────────────────────────────────
 
 async function sync() {
@@ -113,11 +185,6 @@ async function sync() {
         p.text({
           message: "Trakt Client ID",
           placeholder: "paste from your Trakt app",
-          validate: (v) => (!v?.trim() ? "Required" : undefined),
-        }),
-      client_secret: () =>
-        p.password({
-          message: "Trakt Client Secret",
           validate: (v) => (!v?.trim() ? "Required" : undefined),
         }),
       remove_previous: () =>
@@ -178,13 +245,10 @@ async function sync() {
 
   // ── Trakt auth ───────────────────────────────────────────
 
-  const trakt = new Trakt({
-    client_id: config.client_id,
-    client_secret: config.client_secret,
-  });
-
+  const clientId = config.client_id.trim();
+  let accessToken;
   try {
-    const codes = await trakt.get_codes();
+    const codes = await requestDeviceCode(clientId);
 
     p.note(
       `Open  ${chalk.underline.cyan(codes.verification_url)}\n` +
@@ -193,13 +257,14 @@ async function sync() {
     );
 
     s.start("Waiting for authorization");
-    await trakt.poll_access(codes);
+    const token = await pollDeviceToken(clientId, codes);
+    accessToken = token.access_token;
     s.stop("Trakt authorized");
   } catch (err) {
     s.stop("Trakt auth failed");
     p.log.error(err.message);
     p.outro(
-      chalk.red("Could not authorize Trakt — check your credentials."),
+      chalk.red("Could not authorize Trakt — check your Client ID."),
     );
     process.exit(1);
   }
@@ -211,14 +276,22 @@ async function sync() {
       s.start("Clearing previous history");
 
       const [moviesRes, showsRes] = await Promise.all([
-        trakt.sync.watched({ type: "movies" }),
-        trakt.sync.watched({ type: "shows" }),
+        traktRequest(clientId, accessToken, "/sync/watched/movies"),
+        traktRequest(clientId, accessToken, "/sync/watched/shows"),
       ]);
 
-      const result = await trakt.sync.history.remove({
-        movies: moviesRes.map((i) => i.movie),
-        shows: showsRes.map((i) => i.show),
-      });
+      const result = await traktRequest(
+        clientId,
+        accessToken,
+        "/sync/history/remove",
+        {
+          method: "POST",
+          body: {
+            movies: moviesRes.map((i) => i.movie),
+            shows: showsRes.map((i) => i.show),
+          },
+        },
+      );
 
       s.stop(
         `Removed ${chalk.yellow(result.deleted.movies)} movies and ${chalk.yellow(result.deleted.episodes)} episodes`,
@@ -242,7 +315,10 @@ async function sync() {
       `Syncing ${payload.shows.length} shows and ${payload.movies.length} movies`,
     );
 
-    const result = await trakt.sync.history.add(payload);
+    const result = await traktRequest(clientId, accessToken, "/sync/history", {
+      method: "POST",
+      body: payload,
+    });
     s.stop("Sync complete");
 
     p.note(
@@ -285,4 +361,6 @@ export {
   buildSyncPayload,
   safeSpinner,
   sync,
+  TRAKT_AUTH_URL,
+  TRAKT_API_URL,
 };

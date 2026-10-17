@@ -10,7 +10,7 @@ Single-file Node.js CLI tool (`sync.mjs`) that transfers watch history from Simk
 
 - `node sync.mjs sync` — starts the interactive sync workflow (prompts for API credentials)
 - `node sync.mjs --help` — displays CLI usage
-- The sync command is fully interactive and requires real Simkl and Trakt API credentials (Client IDs / secrets) plus OAuth authorization in a browser. See `README.md` for details on creating API apps.
+- The sync command is fully interactive and requires a Simkl client id and a Trakt client id, then OAuth authorization in a browser. See `README.md` for how to create the API apps. Trakt sign-in uses the device code flow and the client id only.
 
 ### Lint / Test / Build
 
@@ -18,7 +18,7 @@ Single-file Node.js CLI tool (`sync.mjs`) that transfers watch history from Simk
 - **Tests** — `npm test` runs vitest. Three test files in `test/`:
   - `data-pipeline.test.mjs` — transform functions + fetchJson with real HTTP server
   - `cli.test.mjs` — CLI integration tests via process spawning
-  - `sync-flow.test.mjs` — full sync flow with mocked APIs (node-fetch, trakt.tv, @clack/prompts)
+  - `sync-flow.test.mjs` — full sync flow with mocked APIs (node-fetch, @clack/prompts)
 - **No build step** — the app runs directly via `node sync.mjs` (ES Modules).
 
 ### Notes
