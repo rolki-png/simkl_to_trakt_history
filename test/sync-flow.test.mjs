@@ -610,6 +610,24 @@ describe("sync flow — spinner safety (Issue #1)", () => {
   });
 });
 
+describe("sync flow — Trakt sign-in without a client secret", () => {
+  it("does not ask for or send a Trakt client secret", async () => {
+    setupDefaultMocks();
+
+    await sync();
+
+    expect(p.group.mock.calls[0][0]).not.toHaveProperty("client_secret");
+
+    const tokenCall = fetch.mock.calls.find((call) =>
+      String(call[0]).includes("/oauth/device/token"),
+    );
+    expect(tokenCall).toBeDefined();
+    const body = JSON.parse(tokenCall[1].body);
+    expect(body.client_id).toBe("test-trakt-id");
+    expect(body).not.toHaveProperty("client_secret");
+  });
+});
+
 describe("sync flow — single payload computation (Issue #2)", () => {
   it("calls buildSyncPayload only once for both display and sync", async () => {
     setupDefaultMocks();
