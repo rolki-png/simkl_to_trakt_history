@@ -136,4 +136,5 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch"
             --append-system-prompt "Most of these repos are public. Never commit secrets, tokens, credentials, home addresses or IP addresses. Run the repo's tests and linters before pushing, and say in the PR what you ran. Keep the change small enough to review in ten minutes."
