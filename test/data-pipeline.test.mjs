@@ -14,7 +14,7 @@ const SIMKL_SHOW = {
   show: {
     title: "Breaking Bad",
     year: 2008,
-    ids: { imdb: "tt0903747", tmdb: 1396, mal: null, anidb: null },
+    ids: { imdb: "tt0903747", tmdb: 1396, tvdb: 81189, slug: "breaking-bad", mal: null, anidb: null },
   },
   seasons: [
     {
@@ -32,7 +32,7 @@ const SIMKL_ANIME = {
   show: {
     title: "Attack on Titan",
     year: 2013,
-    ids: { mal: 16498, anidb: 9541, imdb: "tt2560140", tmdb: 1429 },
+    ids: { mal: 16498, anidb: 9541, imdb: "tt2560140", tmdb: 1429, tvdb: 267440, slug: "attack-on-titan" },
   },
   seasons: [
     {
@@ -62,15 +62,22 @@ describe("transformShow", () => {
       title: "Breaking Bad",
       year: 2008,
       seasons: SIMKL_SHOW.seasons,
-      ids: { imdb: "tt0903747", tmdb: 1396, mal: null, anidb: null },
+      ids: {
+        slug: "breaking-bad",
+        imdb: "tt0903747",
+        tmdb: 1396,
+        tvdb: 81189,
+      },
     });
   });
 
-  it("maps anime with mal/anidb ids", () => {
+  it("keeps tvdb and slug for anime and drops ids Trakt ignores", () => {
     const result = transformShow(SIMKL_ANIME);
 
-    expect(result.ids.mal).toBe(16498);
-    expect(result.ids.anidb).toBe(9541);
+    expect(result.ids.tvdb).toBe(267440);
+    expect(result.ids.slug).toBe("attack-on-titan");
+    expect(result.ids).not.toHaveProperty("mal");
+    expect(result.ids).not.toHaveProperty("anidb");
     expect(result.title).toBe("Attack on Titan");
   });
 
@@ -82,10 +89,10 @@ describe("transformShow", () => {
     };
     const result = transformShow(input);
 
-    expect(result.ids.mal).toBeUndefined();
+    expect(result.ids.tvdb).toBeUndefined();
+    expect(result.ids.slug).toBeUndefined();
     expect(result.ids.imdb).toBeUndefined();
     expect(result.ids.tmdb).toBeUndefined();
-    expect(result.ids.anidb).toBeUndefined();
   });
 
   it("preserves seasons structure unchanged", () => {
@@ -197,7 +204,7 @@ describe("buildSyncPayload", () => {
     const result = buildSyncPayload(watched);
 
     expect(result.shows[0].ids.imdb).toBe("tt0903747");
-    expect(result.shows[1].ids.mal).toBe(16498);
+    expect(result.shows[1].ids.tvdb).toBe(267440);
     expect(result.movies[0].ids.tmdb).toBe(27205);
   });
 });
