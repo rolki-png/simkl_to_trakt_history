@@ -25,4 +25,4 @@ Single-file Node.js CLI tool (`sync.mjs`) that transfers watch history from Simk
 
 - The `sync` command uses `@clack/prompts` for interactive prompts; piping input or running non-interactively requires special handling.
 - Running `node sync.mjs` without arguments defaults to the `sync` command.
-- Node.js >= 15.3.0 is required (top-level await / ES module support). The VM ships with Node v22+.
+- Node.js 20.12 or newer is required (`@clack/core` uses `styleText` from `node:util`). The VM ships with Node v22+.

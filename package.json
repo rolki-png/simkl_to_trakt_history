@@ -5,6 +5,9 @@
   "main": "sync.mjs",
   "author": "Authenthic Name",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"

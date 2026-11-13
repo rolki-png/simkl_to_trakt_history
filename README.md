@@ -16,7 +16,7 @@ You'll need a **Client ID** from each service. Trakt sign-in uses the device cod
 ## Quick start
 
 ```bash
-# 1. Install Node.js (v15.3.0+) — https://nodejs.org
+# 1. Install Node.js (v20.12.0 or newer) — https://nodejs.org
 # 2. Clone this repo and cd into it
 # 3. Install dependencies
 npm install
