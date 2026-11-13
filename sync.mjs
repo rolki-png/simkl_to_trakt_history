@@ -67,10 +67,10 @@ const transformShow = (show) => ({
   year: show.show.year,
   seasons: show.seasons,
   ids: {
-    mal: show.show.ids?.mal,
+    slug: show.show.ids?.slug,
     imdb: show.show.ids?.imdb,
     tmdb: show.show.ids?.tmdb,
-    anidb: show.show.ids?.anidb,
+    tvdb: show.show.ids?.tvdb,
   },
 });
 
@@ -294,6 +294,22 @@ async function clearTraktHistory(clientId, accessToken, spinner) {
   }
 }
 
+function reportNotFound(notFound) {
+  if (!notFound) return;
+  const { movies = [], shows = [], seasons = [], episodes = [] } = notFound;
+  if (!movies.length && !shows.length && !seasons.length && !episodes.length) {
+    return;
+  }
+
+  const label = (i) => (i.year ? `${i.title} (${i.year})` : `${i.title}`);
+  const lines = [
+    `Trakt could not match ${movies.length} movies, ${shows.length} shows, ${seasons.length} seasons and ${episodes.length} episodes.`,
+    ...movies.map((m) => `  Movie: ${label(m)}`),
+    ...shows.map((s) => `  Show: ${label(s)}`),
+  ];
+  p.log.warning(lines.join("\n"));
+}
+
 async function pushTraktHistory(clientId, accessToken, payload, spinner) {
   try {
     spinner.start(
@@ -313,6 +329,8 @@ async function pushTraktHistory(clientId, accessToken, payload, spinner) {
       ].join("\n"),
       "Summary",
     );
+
+    reportNotFound(result.not_found);
   } catch (err) {
     fail(spinner, "Sync failed", err, "Sync failed.");
   }

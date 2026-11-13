@@ -65,7 +65,7 @@ const SIMKL_WATCH_DATA = {
       show: {
         title: "Breaking Bad",
         year: 2008,
-        ids: { imdb: "tt0903747", tmdb: 1396, mal: null, anidb: null },
+        ids: { imdb: "tt0903747", tmdb: 1396, tvdb: 81189, slug: "breaking-bad", mal: null, anidb: null },
       },
       seasons: [
         {
@@ -81,7 +81,7 @@ const SIMKL_WATCH_DATA = {
       show: {
         title: "Attack on Titan",
         year: 2013,
-        ids: { mal: 16498, anidb: 9541, imdb: "tt2560140", tmdb: 1429 },
+        ids: { mal: 16498, anidb: 9541, imdb: "tt2560140", tmdb: 1429, tvdb: 267440, slug: "attack-on-titan" },
       },
       seasons: [
         {
@@ -334,8 +334,43 @@ describe("sync flow — happy path", () => {
     const payload = bodyOf(addCall);
 
     expect(payload.shows[0].ids.imdb).toBe("tt0903747");
-    expect(payload.shows[1].ids.mal).toBe(16498);
+    expect(payload.shows[1].ids.tvdb).toBe(267440);
     expect(payload.movies[0].ids.tmdb).toBe(27205);
+  });
+});
+
+describe("sync flow — unmatched items", () => {
+  it("warns naming shows Trakt could not match", async () => {
+    setupDefaultMocks(DEFAULT_CONFIG, {
+      addResult: {
+        added: { movies: 0, episodes: 0 },
+        not_found: {
+          movies: [],
+          shows: [{ title: "Lost Anime", year: 2020, ids: {} }],
+          seasons: [],
+          episodes: [],
+        },
+      },
+    });
+
+    await sync();
+
+    expect(p.log.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Lost Anime (2020)"),
+    );
+  });
+
+  it("does not warn when nothing is unmatched", async () => {
+    setupDefaultMocks(DEFAULT_CONFIG, {
+      addResult: {
+        added: { movies: 1, episodes: 2 },
+        not_found: { movies: [], shows: [], seasons: [], episodes: [] },
+      },
+    });
+
+    await sync();
+
+    expect(p.log.warning).not.toHaveBeenCalled();
   });
 });
 
