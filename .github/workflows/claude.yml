@@ -1,8 +1,17 @@
 name: Claude agent
 
+# Issues labelled agent-ready form a queue that this workflow drains one at a
+# time per repo. Labels hold the queue state, so a cancelled or failed run
+# loses nothing: agent-ready -> agent-working -> agent-pr | needs-human.
+
 on:
   issues:
     types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to fix
+        required: true
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -10,16 +19,100 @@ on:
   pull_request_review:
     types: [submitted]
 
-concurrency:
-  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
-
 jobs:
-  claude:
+  fix:
     if: |
       (github.event_name == 'issues' && github.event.label.name == 'agent-ready') ||
+      github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: claude-fix-${{ github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ inputs.issue || github.event.issue.number }}
+    steps:
+      - name: Claim the issue
+        id: claim
+        run: |
+          labels=$(gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json state,labels \
+            --jq 'select(.state == "OPEN") | [.labels[].name] | join(",")')
+          case ",$labels," in
+            *,agent-ready,*) ;;
+            *) echo "Issue #$ISSUE is closed or not agent-ready; nothing to do."; exit 0 ;;
+          esac
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label agent-working
+          echo "claimed=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        if: steps.claim.outputs.claimed == 'true'
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.claim.outputs.claimed == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch"
+          prompt: |
+            Fix issue #${{ env.ISSUE }} in ${{ github.repository }}. Read it with
+            `gh issue view ${{ env.ISSUE }}`. It is a spec with Problem, Change and
+            Done when sections.
+
+            1. Read AGENTS.md or CLAUDE.md first if the repo has one.
+            2. Create the branch `claude/issue-${{ env.ISSUE }}` from the default branch.
+            3. Make the change the spec asks for, and nothing else.
+            4. Run the "Done when" check and the repo's own build, tests and linters.
+            5. Commit, push the branch, and open a pull request with
+               `gh pr create --head claude/issue-${{ env.ISSUE }}`. Its body says why,
+               what changed, every command you ran with its result, and ends with
+               `Closes #${{ env.ISSUE }}`.
+
+            You cannot change files under `.github/workflows`; GitHub refuses that
+            push. If the spec needs a workflow change, do the rest and put the exact
+            workflow diff in the PR body under "Workflow change to apply by hand".
+            If the workflow change is the whole fix, open no PR and comment the diff
+            on the issue instead.
+
+            If the spec is wrong, unsafe, or you cannot prove the fix works, open no
+            PR. Comment on the issue saying what you found.
+
+            Most of these repos are public. Never commit secrets, tokens,
+            credentials, home addresses, IP addresses or MAC addresses. Keep the
+            change small enough to review in ten minutes. Write in British English
+            and never use em dashes.
+
+      - name: Record the outcome
+        if: always() && steps.claim.outputs.claimed == 'true'
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "claude/issue-$ISSUE" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$pr" ]; then outcome=agent-pr; else outcome=needs-human; fi
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --remove-label agent-ready --remove-label agent-working --add-label "$outcome"
+          echo "Issue #$ISSUE: $outcome ${pr}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start the next queued issue
+        if: always()
+        run: |
+          next=$(gh issue list --repo "$GITHUB_REPOSITORY" --label agent-ready --state open --limit 100 \
+            --json number,labels \
+            --jq '[.[] | select([.labels[].name] | index("agent-working") | not) | .number] | sort | .[0] // empty')
+          if [ -n "$next" ]; then gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" -f issue="$next"; fi
+
+  respond:
+    if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))
+    concurrency:
+      group: claude-respond-${{ github.event.issue.number || github.event.pull_request.number }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -36,6 +129,5 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          label_trigger: agent-ready
           claude_args: |
-            --append-system-prompt "This repo is public. Never commit secrets, tokens, credentials, home addresses or IP addresses. Run the repo's tests and linters before pushing, and say in the PR what you ran. Keep the change small enough to review in ten minutes."
+            --append-system-prompt "Most of these repos are public. Never commit secrets, tokens, credentials, home addresses or IP addresses. Run the repo's tests and linters before pushing, and say in the PR what you ran. Keep the change small enough to review in ten minutes."
