@@ -109,6 +109,26 @@ async function requestDeviceCode(clientId) {
   });
 }
 
+class SimklAuthError extends Error {}
+
+async function pollSimklToken(clientId, pin) {
+  const deadline = Date.now() + Number(pin.expires_in ?? 900) * 1000;
+  const waitMs = Math.max(0, Number(pin.interval ?? 5)) * 1000;
+
+  // The user has already confirmed, so check straight away.
+  while (true) {
+    const res = await fetchJson(
+      `${SIMKL_PIN_URL}/${pin.user_code}?client_id=${clientId}`,
+    );
+    if (res.access_token && res.result !== "KO") return res.access_token;
+
+    if (Date.now() + waitMs >= deadline) break;
+    await sleep(waitMs);
+  }
+
+  throw new SimklAuthError("Simkl authorization expired or was not approved");
+}
+
 async function pollDeviceToken(clientId, device) {
   const expiresIn = Number(device.expires_in ?? 600);
   const deadline = Date.now() + expiresIn * 1000;
@@ -206,9 +226,7 @@ async function pullSimklHistory(simklClientId, spinner) {
 
     spinner.start("Pulling watch history");
 
-    const { access_token } = await fetchJson(
-      `${SIMKL_PIN_URL}/${pin.user_code}?client_id=${simklClientId}`,
-    );
+    const access_token = await pollSimklToken(simklClientId, pin);
 
     const watched = await fetchJson(SIMKL_SYNC_URL, {
       headers: {
@@ -228,7 +246,9 @@ async function pullSimklHistory(simklClientId, spinner) {
       spinner,
       "Simkl failed",
       err,
-      "Could not fetch Simkl data — check your Client ID.",
+      err instanceof SimklAuthError
+        ? err.message
+        : "Could not fetch Simkl data — check your Client ID.",
     );
   }
 }

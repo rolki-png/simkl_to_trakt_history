@@ -411,6 +411,70 @@ describe("sync flow — history removal", () => {
   });
 });
 
+describe("sync flow — Simkl pin polling", () => {
+  it("keeps polling while the pin is not yet approved", async () => {
+    setupDefaultMocks();
+    const base = fetch.getMockImplementation();
+    let pinChecks = 0;
+    fetch.mockImplementation(async (url, options) => {
+      if (url.includes("/oauth/pin?client_id=")) {
+        return jsonResponse(200, {
+          user_code: "SIMKL_PIN",
+          verification_url: "https://simkl.com/pin",
+          expires_in: 900,
+          interval: 0,
+        });
+      }
+      if (url.includes("/oauth/pin/SIMKL_PIN")) {
+        pinChecks += 1;
+        return pinChecks === 1
+          ? jsonResponse(200, { result: "KO" })
+          : jsonResponse(200, { result: "OK", access_token: "simkl_token_123" });
+      }
+      return base(url, options);
+    });
+
+    await sync();
+
+    expect(pinChecks).toBe(2);
+    const allItems = fetch.mock.calls.filter((c) =>
+      c[0].includes("/sync/all-items"),
+    );
+    expect(allItems).toHaveLength(1);
+    expect(allItems[0][1].headers.Authorization).toBe("Bearer simkl_token_123");
+  });
+
+  it("reports an authorization error when the pin expires", async () => {
+    setupDefaultMocks();
+    const base = fetch.getMockImplementation();
+    fetch.mockImplementation(async (url, options) => {
+      if (url.includes("/oauth/pin?client_id=")) {
+        return jsonResponse(200, {
+          user_code: "SIMKL_PIN",
+          verification_url: "https://simkl.com/pin",
+          expires_in: 0,
+          interval: 0,
+        });
+      }
+      if (url.includes("/oauth/pin/SIMKL_PIN")) {
+        return jsonResponse(200, { result: "KO" });
+      }
+      return base(url, options);
+    });
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`EXIT_${code}`);
+    });
+
+    await expect(sync()).rejects.toThrow("EXIT_1");
+    expect(p.outro).toHaveBeenCalledWith(
+      "Simkl authorization expired or was not approved",
+    );
+    expect(
+      fetch.mock.calls.filter((c) => c[0].includes("/sync/all-items")),
+    ).toHaveLength(0);
+  });
+});
+
 describe("sync flow — error handling", () => {
   it("exits on Simkl API error", async () => {
     setupDefaultMocks();
