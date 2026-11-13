@@ -47,7 +47,23 @@ jobs:
             *,agent-ready,*) ;;
             *) echo "Issue #$ISSUE is closed or not agent-ready; nothing to do."; exit 0 ;;
           esac
-          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label agent-working
+          # The concurrency group lets one fix job run per repo, so an
+          # agent-working label seen here was left by a run that died.
+          case ",$labels," in
+            *,agent-working,*) echo "Issue #$ISSUE was left agent-working by a lost run; taking it over." ;;
+          esac
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "claude/issue-$ISSUE" --state open --json url --jq '.[0].url // empty')
+          if [ -n "$pr" ]; then
+            gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --remove-label agent-ready --remove-label agent-working --add-label agent-pr
+            echo "Issue #$ISSUE already has $pr; nothing to do."
+            exit 0
+          fi
+          if ! gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --add-label agent-working; then
+            gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label agent-ready --add-label needs-human || true
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "The Claude agent could not claim this issue. Its log: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Add the agent-ready label again to retry." || true
+            exit 1
+          fi
           echo "claimed=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
@@ -106,10 +122,12 @@ jobs:
 
       - name: Start the next queued issue
         if: always()
+        # Labels read here can lag the edits above by a few seconds, so skip this
+        # run's issue by number. Any other agent-working issue was left by a lost
+        # run, since this job holds the concurrency group, so it is fair game.
         run: |
           next=$(gh issue list --repo "$GITHUB_REPOSITORY" --label agent-ready --state open --limit 100 \
-            --json number,labels \
-            --jq '[.[] | select([.labels[].name] | index("agent-working") | not) | .number] | sort | .[0] // empty')
+            --json number --jq "[.[].number | select(. != $ISSUE)] | sort | .[0] // empty")
           if [ -n "$next" ]; then gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" -f issue="$next"; fi
 
   respond:
