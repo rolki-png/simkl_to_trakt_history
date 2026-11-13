@@ -59,6 +59,9 @@ jobs:
         if: steps.claim.outputs.claimed == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The queue hands off to the next issue through workflow_dispatch, which
+          # runs as github-actions. Only workflows in this repo can act as it.
+          allowed_bots: github-actions
           claude_args: |
             --allowedTools "Bash,Read,Write,Edit,Glob,Grep,WebFetch"
           prompt: |
@@ -96,6 +99,9 @@ jobs:
           if [ -n "$pr" ]; then outcome=agent-pr; else outcome=needs-human; fi
           gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" \
             --remove-label agent-ready --remove-label agent-working --add-label "$outcome"
+          if [ "$outcome" = needs-human ]; then
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "The Claude agent finished without opening a PR. Its log: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Add the agent-ready label again to retry."
+          fi
           echo "Issue #$ISSUE: $outcome ${pr}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Start the next queued issue
