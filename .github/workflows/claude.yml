@@ -127,7 +127,7 @@ jobs:
         # run, since this job holds the concurrency group, so it is fair game.
         run: |
           next=$(gh issue list --repo "$GITHUB_REPOSITORY" --label agent-ready --state open --limit 100 \
-            --json number --jq "[.[].number | select(. != $ISSUE)] | sort | .[0] // empty")
+            --json number --jq '.[].number' | { grep -vxF -- "$ISSUE" || true; } | sort -n | head -n 1)
           if [ -n "$next" ]; then gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" -f issue="$next"; fi
 
   respond:

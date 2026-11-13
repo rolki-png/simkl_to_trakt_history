@@ -119,7 +119,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      actions: write
+    outputs:
+      filed: ${{ steps.filer.outputs.filed }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -139,15 +140,14 @@ jobs:
 
           const findings = JSON.parse(readFileSync("findings.json", "utf8"));
           if (!Array.isArray(findings)) throw new Error("findings.json is not an array");
-          // An IPv4 address is four octets of 0 to 255 standing alone. A letter,
-          // digit, dot or @ before it, or a dot and digit after, marks a version.
-          const octet = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
-          const ipv4 = `(?<![\\w.@])(?:${octet}\\.){3}${octet}(?!\\w|\\.\\d)`;
+          // A v or a digit and dot before four dotted numbers, or a dot and digit
+          // after them, marks a version string such as v1.2.3.4, not an address.
+          const ipv4 = String.raw`(?<![\dvV]|\d\.)(?:\d{1,3}\.){3}\d{1,3}(?!\d|\.\d)`;
           const allowedIps = /^(?:127\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|0\.0\.0\.0$)/;
           const banned = [/[A-Za-z]:[\\/]Users[\\/]/i, /\/home\/\w+/, /\/Users\/\w+/,
             /\bsk-[A-Za-z0-9-]{10,}/, /\bgh[opsu]_[A-Za-z0-9]{20,}/, /\bgithub_pat_\w{20,}/,
             // A MAC address needs separators, so a 12-character short SHA is not one.
-            /(?<![0-9a-f:-])[0-9a-f]{2}([:-])[0-9a-f]{2}(?:\1[0-9a-f]{2}){4}(?![0-9a-f:-])/i];
+            /(?<![0-9a-f])[0-9a-f]{2}([:-])[0-9a-f]{2}(?:\1[0-9a-f]{2}){4}(?![0-9a-f])/i];
           const exposes = (text) => banned.some((re) => re.test(text)) ||
             [...text.matchAll(new RegExp(ipv4, "g"))].some(([ip]) => !allowedIps.test(ip));
           const known = new Set(JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "all", "--limit", "500", "--json", "title"]))
@@ -179,21 +179,32 @@ jobs:
           }
           JS
 
+  # Runs every week, even when the backlog skips the audit, so an issue a lost
+  # run left agent-working is never stuck for good.
+  queue:
+    needs: [audit, file]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
       # The issue list can lag the issues just filed, so those are added by
       # number. While a fix run is active, agent-working issues are its own and
       # it hands the queue on when it ends. With none active, an agent-working
       # issue was left by a lost run, so it is queued again.
       - name: Start the agent queue
-        if: always()
         env:
-          FILED: ${{ steps.filer.outputs.filed }}
+          FILED: ${{ needs.file.outputs.filed }}
         run: |
           active=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow claude.yml --limit 50 --json status,event \
-            --jq '[.[] | select(.status != "completed" and (.event == "workflow_dispatch" or .event == "issues"))] | length')
+            --jq '[.[] | select(.status != "completed" and (.event == "workflow_dispatch" or .event == "issues"))] | length' || echo 0)
           if [ "$active" -gt 0 ]; then skip=agent-working; else skip=none; fi
           next=$({
             gh issue list --repo "$GITHUB_REPOSITORY" --label agent-ready --state open --limit 100 --json number,labels \
-              --jq ".[] | select([.labels[].name] | index(\"$skip\") | not) | .number"
+              --jq ".[] | select([.labels[].name] | index(\"$skip\") | not) | .number" || true
             for n in $FILED; do echo "$n"; done
           } | sort -n | head -n 1)
           if [ -n "$next" ]; then gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" -f issue="$next"; fi
